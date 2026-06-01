@@ -7,6 +7,8 @@ const PORT = process.env.PORT || 3000;
 
 // Permite recibir y parsear cuerpos JSON en las solicitudes entrantes.
 app.use(express.json());
+// Middleware para despachar archivos estáticos desde el directorio 'public'
+app.use(express.static('public'));
 
 // Endpoint que valida credenciales y devuelve un token de acceso para el usuario.
 app.post('/api/auth/login', async (req, res) => {
