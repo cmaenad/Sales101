@@ -6,8 +6,18 @@
 </head>
 <body>
     <h2>Interfaz de Agente de Salesforce</h2>
-    <p>Conexión establecida. JWT en memoria.</p>
-    <button id="logout-button">Finalizar Sesión</button>
+    <div id="status-indicator">Verificando memoria persistente...</div>
+    
+    <div id="chat-window" style="height: 300px; border: 1px solid black; overflow-y: scroll; margin-bottom: 10px; padding: 10px;">
+    </div>
+
+    <form id="chat-form">
+        <input type="text" id="chat-input" required placeholder="Ingrese comando para el agente..." style="width: 80%;">
+        <button type="submit">Transmisión</button>
+    </form>
+
+    <br>
+    <button id="logout-button">Destruir Sesión (Logout)</button>
 
     <script src="chat.js"></script>
 </body>
