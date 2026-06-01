@@ -21,4 +21,4 @@ async function registrarNuevoUsuario(email, password) {
 }
 
 // Ejemplo de uso: cambia estas credenciales a valores válidos de tu entorno de prueba.
-registrarNuevoUsuario("testagenteia@example.com", "PasswordEstructural123!");
+registrarNuevoUsuario("usuario@example.com", "PasswordEstructural123!");

@@ -36,4 +36,4 @@ async function aprovisionarUsuario(email, password) {
 }
 
 // Replace the example credentials with valid values for your test environment.
-aprovisionarUsuario("cruzmaciasenrique0@gmail.com", "CredencialIT_Segura_2026!");
+aprovisionarUsuario("usuario@example.com", "CredencialIT_Segura_2026!");
