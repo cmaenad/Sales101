@@ -1,5 +1,5 @@
 async function simularLoginSalesforce() {
-    const targetUrl = 'http://localhost:3000/api/auth/login';
+    const targetUrl = 'https://sales101.onrender.com/api/auth/login';
     
     // Credenciales aprovisionadas por TI en el paso anterior
     const credenciales = {
