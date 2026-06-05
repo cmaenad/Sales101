@@ -5,86 +5,140 @@ const supabase = require('./supabase');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Permite recibir y parsear cuerpos JSON en las solicitudes entrantes.
 app.use(express.json());
-// Middleware para despachar archivos estáticos desde el directorio 'public'
 app.use(express.static('public'));
 
-// Endpoint que valida credenciales y devuelve un token de acceso para el usuario.
-app.post('/api/auth/login', async (req, res) => {
-    const { email, password } = req.body;
+// ------------------------------------------------------------------
+// BLOQUE 1: GESTIÓN DE ESTADO M2M (SALESFORCE CACHE)
+// ------------------------------------------------------------------
+// Estructura en memoria RAM para evitar latencia de negociación OAuth
+let sfCache = {
+    accessToken: null,
+    instanceUrl: null
+};
 
-    if (!email || !password) {
-        return res.status(400).json({ error: "Estructura malformada: Se requiere email y password." });
-    }
-
-    console.log(`Petición de autenticación entrante para: ${email}`);
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password
+// Subrutina para negociar el vector de acceso OAuth 2.0
+async function autenticarM2MSalesforce() {
+    console.log("[Sistema] Iniciando protocolo OAuth Client Credentials contra Salesforce...");
+    const tokenUrl = `${process.env.SF_LOGIN_URL}/services/oauth2/token`;
+    const payload = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: process.env.SF_CLIENT_ID,
+        client_secret: process.env.SF_CLIENT_SECRET
     });
 
-    if (error) {
-        console.error(`Fallo de autorización: ${error.message}`);
-        return res.status(401).json({ error: error.message });
+    const respuesta = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: payload
+    });
+
+    if (!respuesta.ok) {
+        throw new Error(`Fallo de autorización M2M. HTTP ${respuesta.status}`);
     }
 
-    const accessToken = data.session.access_token;
-    console.log("Autenticación exitosa. Emitiendo JWT de acceso.");
+    const datos = await respuesta.json();
+    // Escritura en la estructura estática en memoria
+    sfCache.accessToken = datos.access_token;
+    sfCache.instanceUrl = datos.instance_url;
+    console.log("[Sistema] Memoria caché de Salesforce actualizada con éxito.");
+}
 
-    return res.status(200).json({
-        message: "Autenticación exitosa",
-        user_id: data.user.id,
-        access_token: accessToken
-    });
-});
+// Subrutina de transmisión que maneja la expiración silenciosa del token
+async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
+    // Inicialización perezosa (Lazy Loading) del token
+    if (!sfCache.accessToken) {
+        await autenticarM2MSalesforce();
+    }
 
-// Middleware de Autenticación Criptográfica
-const autenticarToken = async (req, res, next) => {
+    // ADVERTENCIA: Esta URL debe coincidir con la clase Apex REST que definas en Salesforce.
+    // Por convención usaremos '/services/apexrest/AgenteVentas' como marcador de posición.
+    const endpointSalesforce = `${sfCache.instanceUrl}/services/apexrest/AgenteVentas`;
+
+    let opcionesPeticion = {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${sfCache.accessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+            vendedorId: idVendedor,
+            mensaje: mensajeUsuario 
+        })
+    };
+
+    let respuesta = await fetch(endpointSalesforce, opcionesPeticion);
+
+    // Si el token expiró (HTTP 401), invalidamos caché, renegociamos y reintentamos.
+    if (respuesta.status === 401) {
+        console.log("[Sistema] Vector M2M expirado. Limpiando memoria y renegociando...");
+        sfCache.accessToken = null;
+        await autenticarM2MSalesforce();
+        
+        // Actualizamos la cabecera con el nuevo token y disparamos la petición nuevamente
+        opcionesPeticion.headers['Authorization'] = `Bearer ${sfCache.accessToken}`;
+        respuesta = await fetch(endpointSalesforce, opcionesPeticion);
+    }
+
+    if (!respuesta.ok) {
+        const errorText = await respuesta.text();
+        throw new Error(`Excepción en capa Apex. HTTP ${respuesta.status}: ${errorText}`);
+    }
+
+    return await respuesta.json();
+}
+
+// ------------------------------------------------------------------
+// BLOQUE 2: RUTINAS DE SERVICIO WEB (ENDPOINTS)
+// ------------------------------------------------------------------
+
+// Middleware de Autenticación Criptográfica para clientes web (Supabase)
+const autenticarTokenLocal = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    
-    // Validación de existencia y formato del vector
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: "Cabecera de autorización ausente o malformada." });
     }
-
-    // Extracción estricta del token
     const token = authHeader.split(' ')[1];
-
-    // Verificación de firma contra el motor GoTrue
     const { data, error } = await supabase.auth.getUser(token);
 
     if (error || !data.user) {
-        return res.status(401).json({ error: "Token inválido, alterado o expirado." });
+        return res.status(401).json({ error: "Token JWT local inválido." });
     }
-
-    // Inyección de los datos estructurales del usuario en el objeto de la petición
     req.user = data.user;
-    next(); // Cede el control a la siguiente rutina
+    next();
 };
 
-// Endpoint Protegido: Proxy del Agente Salesforce
-app.post('/api/chat', autenticarToken, async (req, res) => {
-    const { mensaje } = req.body;
-    
-    if (!mensaje) {
-        return res.status(400).json({ error: "El payload requiere el atributo 'mensaje'." });
-    }
+// Endpoint: Inicio de Sesión
+app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Estructura malformada." });
 
-    console.log(`[Proxy] Directiva recibida del UUID ${req.user.id}: ${mensaje}`);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return res.status(401).json({ error: error.message });
 
-    // SIMULACIÓN: Aquí se implementará la llamada HTTP nativa hacia la API de Salesforce.
-    // Introducimos un retraso artificial de 800ms para simular latencia de red corporativa.
-    setTimeout(() => {
-        res.status(200).json({
-            respuesta: `[Salesforce PoC] He recibido su directiva: "${mensaje}". Los datos se encuentran en procesamiento.`
-        });
-    }, 800);
+    return res.status(200).json({
+        user_id: data.user.id,
+        access_token: data.session.access_token
+    });
 });
 
-// Inicia el servidor y expone el endpoint de autenticación.
+// Endpoint Protegido: Proxy hacia Salesforce
+app.post('/api/chat', autenticarTokenLocal, async (req, res) => {
+    const { mensaje } = req.body;
+    if (!mensaje) return res.status(400).json({ error: "El payload requiere 'mensaje'." });
+
+    try {
+        // Redirección de la petición hacia el motor de Salesforce
+        const respuestaSalesforce = await ejecutarLlamadaSalesforce(mensaje, req.user.id);
+        
+        // Asumimos que la clase Apex devuelve un JSON con el atributo 'respuesta'
+        res.status(200).json({ respuesta: respuestaSalesforce.respuesta });
+    } catch (error) {
+        console.error(error.message);
+        res.status(502).json({ error: "Fallo de comunicación en el clúster de Salesforce." });
+    }
+});
+
 app.listen(PORT, () => {
-    console.log(`Servidor HTTP activo y escuchando en el puerto ${PORT}`);
-    console.log(`Ruta de autenticación disponible en: http://localhost:${PORT}/api/auth/login`);
+    console.log(`Servidor HTTP activo en el puerto TCP ${PORT}`);
 });
