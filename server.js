@@ -47,98 +47,47 @@ async function autenticarM2MSalesforce() {
 // Tabla Hash para persistir los punteros de sesión del motor de IA
 let sesionesActivas = {};
 const AGENTE_API_NAME = 'Sales_Operations_Agent';
-const AGENTE_ID = '0Xxg5000000t3gPCAQ';
+const AGENTE_ID = '0Xxg5000000t3gPCAQ';// Tabla Hash para persistir los punteros de sesión del motor de IA
+let sesionesActivas = {};
+
 async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
     if (!sfCache.accessToken) {
         await autenticarM2MSalesforce();
     }
 
-    // Punteros de Red hacia la API REST de Agentforce
-// Punteros de Red hacia la API REST de Agentforce en el dominio local del inquilino
-const baseUrl = `${sfCache.instanceUrl}/einstein/ai-agent/v1/agents/${AGENTE_ID}/sessions`;
+    // Puntero de red hacia la Fachada REST en Apex
+    const baseUrl = `${sfCache.instanceUrl}/services/apexrest/AgenteVentas`;
+    
+    // Extracción del UUID de la sesión de la memoria local, si existe
+    const sessionIdLocal = sesionesActivas[idVendedor] || null;
 
-    // 1. Inicialización de Memoria (Negociación de Sesión)
-    if (!sesionesActivas[idVendedor]) {
-        console.log(`[Sistema] Asignando bloque de memoria para sesión del UUID: ${idVendedor}`);
-        
-        const resSesion = await fetch(baseUrl, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${sfCache.accessToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                externalSessionKey: idVendedor,
-                instanceConfig: { endpoint: sfCache.instanceUrl } //
-            })
-        });
-
-        if (!resSesion.ok) {
-            if (resSesion.status === 401) {
-                console.log("[Sistema] Vector M2M expirado durante negociación de sesión. Renegociando...");
-                sfCache.accessToken = null;
-                return ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor);
-            }
-            throw new Error(`Fallo de segmentación en API de Sesión. HTTP ${resSesion.status}`);
-        }
-
-        const datosSesion = await resSesion.json();
-        // Escritura del descriptor de sesión devuelto por el motor
-        sesionesActivas[idVendedor] = datosSesion.sessionId || datosSesion.id;
-    }
-
-    // 2. Transmisión del Búfer de Texto
-    const sessionId = sesionesActivas[idVendedor];
-    const urlMensaje = `${baseUrl}/${sessionId}/messages`;
-
-    let resMensaje = await fetch(urlMensaje, {
+    let resMensaje = await fetch(baseUrl, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${sfCache.accessToken}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            message: {
-                type: "Text",
-                text: mensajeUsuario
-            }
+            vendedorId: idVendedor,
+            mensaje: mensajeUsuario,
+            sessionId: sessionIdLocal
         })
     });
 
     if (!resMensaje.ok) {
         const errorText = await resMensaje.text();
-        throw new Error(`Excepción en el canal de Agentforce. HTTP ${resMensaje.status}: ${errorText}`);
+        throw new Error(`Excepción en el canal Apex. HTTP ${resMensaje.status}: ${errorText}`);
     }
 
     const datosRespuesta = await resMensaje.json();
     
-    // Desreferenciación de la cadena resultante de la inferencia
-    // ADVERTENCIA: La ruta del nodo JSON de salida depende de la versión de la API de tu org.
-    return { respuesta: datosRespuesta.messages[0].text || "Inferencia procesada." };
-}
-// Middleware de Autenticación Criptográfica para clientes web (Supabase)
-const autenticarTokenLocal = async (req, res, next) => {
-    const authHeader = req.headers['authorization'];
+    // Escritura del nuevo puntero de sesión retornado por el motor
+    if (datosRespuesta.sessionId) {
+        sesionesActivas[idVendedor] = datosRespuesta.sessionId;
+    }
     
-    // Validación de existencia y formato del vector
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: "Cabecera de autorización ausente o malformada." });
-    }
-
-    // Extracción estricta del token
-    const token = authHeader.split(' ')[1];
-
-    // Verificación de firma contra el motor GoTrue
-    const { data, error } = await supabase.auth.getUser(token);
-
-    if (error || !data.user) {
-        return res.status(401).json({ error: "Token JWT local inválido o expirado." });
-    }
-
-    // Inyección de los datos estructurales del usuario en el objeto de la petición
-    req.user = data.user;
-    next(); // Cede el control a la siguiente rutina en el stack de Express
-};
+    return { respuesta: datosRespuesta.respuesta };
+}
 // Endpoint: Inicio de Sesión
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;

@@ -1,24 +1,38 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>Agente Salesforce Activo</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <title>FinPulse — Chat</title>
 </head>
 <body>
-    <h2>Interfaz de Agente de Salesforce</h2>
-    <div id="status-indicator">Verificando memoria persistente...</div>
-    
-    <div id="chat-window" style="height: 300px; border: 1px solid black; overflow-y: scroll; margin-bottom: 10px; padding: 10px;">
+  <header class="site-header">
+    <div class="brand">FinPulse</div>
+    <div class="subtitle">Soporte Inteligente</div>
+  </header>
+
+  <main class="chat-layout">
+    <div class="chat-panel">
+      <aside class="sidebar">
+        <div class="status">Estado: <strong id="status-indicator">Verificando memoria persistente...</strong></div>
+        <div class="small">Usuario: <span id="user-name">Anónimo</span></div>
+        <hr>
+        <div class="small">Atajos: <br>- Escribe y presiona Enter</div>
+      </aside>
+
+      <section class="chat-window" id="chat-window" aria-live="polite"></section>
     </div>
 
-    <form id="chat-form">
-        <input type="text" id="chat-input" required placeholder="Ingrese comando para el agente..." style="width: 80%;">
-        <button type="submit">Transmisión</button>
+    <form id="chat-form" class="chat-controls" autocomplete="off">
+      <input type="text" id="chat-input" required placeholder="Escribe un mensaje o comando..." />
+      <button type="submit" class="btn primary">Enviar</button>
+      <button id="logout-button" type="button" class="btn ghost">Cerrar sesión</button>
     </form>
+  </main>
 
-    <br>
-    <button id="logout-button">Destruir Sesión (Logout)</button>
-
-    <script src="chat.js"></script>
+  <script src="chat.js"></script>
 </body>
 </html>
