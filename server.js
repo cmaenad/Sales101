@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const supabase = require('./supabase'); // Instanciación del cliente de Supabase
+const supabase = require('./supabase'); // Instanciación del cliente M2M local
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -45,7 +45,7 @@ async function autenticarM2MSalesforce() {
 }
 
 // ------------------------------------------------------------------
-// BLOQUE 2: ENRUTAMIENTO HACIA SALESFORCE Y GESTIÓN DE SESIÓN
+// BLOQUE 2: ENRUTAMIENTO HACIA SALESFORCE Y DECODIFICACIÓN
 // ------------------------------------------------------------------
 // Tabla Hash para persistir los punteros de sesión UUID del motor de IA
 let sesionesActivas = {};
@@ -75,7 +75,7 @@ async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
     });
 
     if (!resMensaje.ok) {
-        // Manejo de interrupción por expiración del token M2M en el servidor destino
+        // Manejo de interrupción por expiración del token M2M
         if (resMensaje.status === 401) {
             console.log("[Sistema] Vector M2M expirado durante transmisión. Renegociando...");
             sfCache.accessToken = null;
@@ -92,13 +92,31 @@ async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
         sesionesActivas[idVendedor] = datosRespuesta.sessionId;
     }
     
-    return { respuesta: datosRespuesta.respuesta };
+    // ------------------------------------------------------------------
+    // RUTINA DE DESERIALIZACIÓN ANIDADA (SANITIZACIÓN DE BÚFER)
+    // ------------------------------------------------------------------
+    let textoFinal = datosRespuesta.respuesta;
+    
+    try {
+        // Intentar compilar el string interno como un objeto JSON
+        const estructuraInterna = JSON.parse(textoFinal);
+        
+        // Desreferenciar estrictamente el atributo 'value' si la estructura es válida
+        if (estructuraInterna && typeof estructuraInterna.value === 'string') {
+            textoFinal = estructuraInterna.value;
+        }
+    } catch (excepcionParseo) {
+        // Fallback: Si el motor retorna texto plano sin encapsular, el bloque 
+        // try fallará silenciosamente y se mantendrá el búfer original.
+    }
+    
+    return { respuesta: textoFinal };
 }
 
 // ------------------------------------------------------------------
 // BLOQUE 3: MIDDLEWARE DE SEGURIDAD LOCAL
 // ------------------------------------------------------------------
-// Rutina de intercepción para validación de firmas criptográficas
+// Rutina de intercepción para validación de firmas criptográficas (Supabase)
 const autenticarTokenLocal = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     
@@ -121,7 +139,7 @@ const autenticarTokenLocal = async (req, res, next) => {
 // ------------------------------------------------------------------
 // BLOQUE 4: ENDPOINTS Y MULTIPLEXOR
 // ------------------------------------------------------------------
-// Endpoint: Negociación inicial y emisión de JWT
+// Endpoint: Negociación inicial y emisión de JWT local
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: "Estructura de entrada malformada." });
