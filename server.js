@@ -47,15 +47,16 @@ async function autenticarM2MSalesforce() {
 // Tabla Hash para persistir los punteros de sesión del motor de IA
 let sesionesActivas = {};
 const AGENTE_API_NAME = 'Sales_Operations_Agent';
-
+const AGENTE_ID = '0Xxg5000000t3gPCAQ';
 async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
     if (!sfCache.accessToken) {
         await autenticarM2MSalesforce();
     }
 
     // Punteros de Red hacia la API REST de Agentforce
-    const baseUrl = `https://api.salesforce.com/einstein/ai-agent/v1/agents/${AGENTE_API_NAME}/sessions`;
-    
+// Punteros de Red hacia la API REST de Agentforce en el dominio local del inquilino
+const baseUrl = `${sfCache.instanceUrl}/einstein/ai-agent/v1/agents/${AGENTE_ID}/sessions`;
+
     // 1. Inicialización de Memoria (Negociación de Sesión)
     if (!sesionesActivas[idVendedor]) {
         console.log(`[Sistema] Asignando bloque de memoria para sesión del UUID: ${idVendedor}`);
