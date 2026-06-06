@@ -44,69 +44,77 @@ async function autenticarM2MSalesforce() {
     console.log("[Sistema] Memoria caché de Salesforce actualizada con éxito.");
 }
 
-// Subrutina de transmisión que maneja la expiración silenciosa del token
+// Tabla Hash para persistir los punteros de sesión del motor de IA
+let sesionesActivas = {};
+const AGENTE_API_NAME = 'Sales_Operations_Agent';
+
 async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
-    // Inicialización perezosa (Lazy Loading) del token
     if (!sfCache.accessToken) {
         await autenticarM2MSalesforce();
     }
 
-    // ADVERTENCIA: Esta URL debe coincidir con la clase Apex REST que definas en Salesforce.
-    // Por convención usaremos '/services/apexrest/AgenteVentas' como marcador de posición.
-    const endpointSalesforce = `${sfCache.instanceUrl}/services/apexrest/AgenteVentas`;
+    // Punteros de Red hacia la API REST de Agentforce
+    const baseUrl = `https://api.salesforce.com/einstein/ai-agent/v1/agents/${AGENTE_API_NAME}/sessions`;
+    
+    // 1. Inicialización de Memoria (Negociación de Sesión)
+    if (!sesionesActivas[idVendedor]) {
+        console.log(`[Sistema] Asignando bloque de memoria para sesión del UUID: ${idVendedor}`);
+        
+        const resSesion = await fetch(baseUrl, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${sfCache.accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                externalSessionKey: idVendedor,
+                instanceConfig: { endpoint: sfCache.instanceUrl } //
+            })
+        });
 
-    let opcionesPeticion = {
+        if (!resSesion.ok) {
+            if (resSesion.status === 401) {
+                console.log("[Sistema] Vector M2M expirado durante negociación de sesión. Renegociando...");
+                sfCache.accessToken = null;
+                return ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor);
+            }
+            throw new Error(`Fallo de segmentación en API de Sesión. HTTP ${resSesion.status}`);
+        }
+
+        const datosSesion = await resSesion.json();
+        // Escritura del descriptor de sesión devuelto por el motor
+        sesionesActivas[idVendedor] = datosSesion.sessionId || datosSesion.id;
+    }
+
+    // 2. Transmisión del Búfer de Texto
+    const sessionId = sesionesActivas[idVendedor];
+    const urlMensaje = `${baseUrl}/${sessionId}/messages`;
+
+    let resMensaje = await fetch(urlMensaje, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${sfCache.accessToken}`,
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ 
-            vendedorId: idVendedor,
-            mensaje: mensajeUsuario 
+        body: JSON.stringify({
+            message: {
+                type: "Text",
+                text: mensajeUsuario
+            }
         })
-    };
+    });
 
-    let respuesta = await fetch(endpointSalesforce, opcionesPeticion);
-
-    // Si el token expiró (HTTP 401), invalidamos caché, renegociamos y reintentamos.
-    if (respuesta.status === 401) {
-        console.log("[Sistema] Vector M2M expirado. Limpiando memoria y renegociando...");
-        sfCache.accessToken = null;
-        await autenticarM2MSalesforce();
-        
-        // Actualizamos la cabecera con el nuevo token y disparamos la petición nuevamente
-        opcionesPeticion.headers['Authorization'] = `Bearer ${sfCache.accessToken}`;
-        respuesta = await fetch(endpointSalesforce, opcionesPeticion);
+    if (!resMensaje.ok) {
+        const errorText = await resMensaje.text();
+        throw new Error(`Excepción en el canal de Agentforce. HTTP ${resMensaje.status}: ${errorText}`);
     }
 
-    if (!respuesta.ok) {
-        const errorText = await respuesta.text();
-        throw new Error(`Excepción en capa Apex. HTTP ${respuesta.status}: ${errorText}`);
-    }
-
-    return await respuesta.json();
+    const datosRespuesta = await resMensaje.json();
+    
+    // Desreferenciación de la cadena resultante de la inferencia
+    // ADVERTENCIA: La ruta del nodo JSON de salida depende de la versión de la API de tu org.
+    return { respuesta: datosRespuesta.messages[0].text || "Inferencia procesada." };
 }
-
-// ------------------------------------------------------------------
-// BLOQUE 2: RUTINAS DE SERVICIO WEB (ENDPOINTS)
-// ------------------------------------------------------------------
-
-// Middleware de Autenticación Criptográfica para clientes web (Supabase)
-const autenticarTokenLocal = async (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: "Cabecera de autorización ausente o malformada." });
-    }
-    const token = authHeader.split(' ')[1];
-    const { data, error } = await supabase.auth.getUser(token);
-
-    if (error || !data.user) {
-        return res.status(401).json({ error: "Token JWT local inválido." });
-    }
-    req.user = data.user;
-    next();
-};
 
 // Endpoint: Inicio de Sesión
 app.post('/api/auth/login', async (req, res) => {
