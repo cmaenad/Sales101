@@ -115,7 +115,29 @@ async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
     // ADVERTENCIA: La ruta del nodo JSON de salida depende de la versión de la API de tu org.
     return { respuesta: datosRespuesta.messages[0].text || "Inferencia procesada." };
 }
+// Middleware de Autenticación Criptográfica para clientes web (Supabase)
+const autenticarTokenLocal = async (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    
+    // Validación de existencia y formato del vector
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: "Cabecera de autorización ausente o malformada." });
+    }
 
+    // Extracción estricta del token
+    const token = authHeader.split(' ')[1];
+
+    // Verificación de firma contra el motor GoTrue
+    const { data, error } = await supabase.auth.getUser(token);
+
+    if (error || !data.user) {
+        return res.status(401).json({ error: "Token JWT local inválido o expirado." });
+    }
+
+    // Inyección de los datos estructurales del usuario en el objeto de la petición
+    req.user = data.user;
+    next(); // Cede el control a la siguiente rutina en el stack de Express
+};
 // Endpoint: Inicio de Sesión
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
