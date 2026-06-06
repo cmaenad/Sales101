@@ -48,7 +48,6 @@ async function autenticarM2MSalesforce() {
 let sesionesActivas = {};
 const AGENTE_API_NAME = 'Sales_Operations_Agent';
 const AGENTE_ID = '0Xxg5000000t3gPCAQ';// Tabla Hash para persistir los punteros de sesión del motor de IA
-let sesionesActivas = {};
 
 async function ejecutarLlamadaSalesforce(mensajeUsuario, idVendedor) {
     if (!sfCache.accessToken) {
